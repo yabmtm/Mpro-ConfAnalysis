@@ -31,60 +31,76 @@ for [project,run] in crystal_runs:
     for clone in clones:
         if not os.path.exists(f'data/P{project}_R{run}_C{clone}'):
             os.makedirs(f'data/P{project}_R{run}_C{clone}')
-        for file in ['npt.gro', 'topol.top', 'prod.mdp']:
+        for file in ['npt.gro', 'topol.top', 'prod.mdp']: # download the files we'll need for each clone
             download(f'{url_prefix}/setup_files/p{project}/RUN0/{file}',
               f'data/P{project}_R{run}_C{clone}/{file}')
         gen = 0
-        while True:
+        while True: # start at gen 0 and download trajectories until the files doesn't exist
             try:
                 print(f'\nProcessing P{project}_R{run}_C{clone}_G{gen}')
                 download(f'{url_prefix}/PROJ{project}/RUN{run}/CLONE{clone}/results{gen}/traj_comp.xtc',
-                  f'data/P{project}_R{run}_C{clone}/traj_comp.xtc')
+                  f'data/P{project}_R{run}_C{clone}/traj_{str(gen).zfill(4)}.xtc')
             except Exception as e:
                 print(e)
                 break
             
             path = f'data/P{project}_R{run}_C{clone}'
             
+            # write a simple mdp just so we can make a tpr
             write_mdp_cmd = f'echo "integrator          = steep" > {path}/xtc.mdp'
+            # make an index file with the Protein_LIG group
             make_index_cmd = f'echo "5|2\nq\n" | gmx make_ndx -f {path}/npt.gro -o {path}/index.ndx'
+            # edit the top file to remove water and ions
             make_xtctop_cmd = f'head -n-3 {path}/topol.top > {path}/xtc.top'
+            # make a gro file with just Protein and LIG
             make_xtcgro_cmd = f'echo "24\n" | gmx editconf -f {path}/npt.gro -n {path}/index.ndx -o {path}/xtc.gro'
+            # now we create an index file with just Protein and LIG
             make_xtcndx_cmd = f'echo "3|2\nq\n" | gmx make_ndx -f {path}/xtc.gro -o {path}/xtc.ndx'
+            # create the tpr we'll need for PBC correction
             make_xtctpr_cmd = f'gmx grompp -f {path}/xtc.mdp -c {path}/xtc.gro -p {path}/xtc.top -o {path}/xtc.tpr'
-            pbc_correct_cmd = f'echo "3\n14\n" | gmx trjconv -f {path}/traj_comp.xtc -s {path}/xtc.tpr -n {path}/xtc.ndx -pbc mol -center -o {path}/traj_{str(gen).zfill(4)}.xtc'
             
-            try:
-              for cmd in [write_mdp_cmd, make_index_cmd, make_xtctop_cmd, make_xtcgro_cmd,
-                make_xtcndx_cmd, make_xtctpr_cmd, pbc_correct_cmd]:
-                  subprocess.check_output(cmd, stderr=subprocess.STDOUT,shell=True).decode().split('\n')
-            except Exception as e:
+            if not os.path.exists(f'{path}/xtc.tpr'): # we can move this out of the while loop since it only need to be done once per clone
+              try:
+                for cmd in [write_mdp_cmd, make_index_cmd, make_xtctop_cmd, make_xtcgro_cmd,
+                  make_xtcndx_cmd, make_xtctpr_cmd]:
+                    subprocess.check_output(cmd, stderr=subprocess.STDOUT,shell=True).decode().split('\n')
+              except Exception as e:
                 print(f'Error processing P{project}_R{run}_C{clone}: {e}')
                 continue
-      
-            traj = md.load(f'{path}/traj_{str(gen).zfill(4)}.xtc',top = f'{path}/xtc.gro')
-            PHE140_indices = [a.index for a in traj.topology.atoms if a.residue.index in [141] and a.name in ['CG','CD1','CD2','CE1','CE2','CZ']]
-            HIS163_indices = [a.index for a in traj.topology.atoms if a.residue.index in [164]and a.name in ['CG','ND1','CD2','CE1','NE2']]
-            traj_PHE140_indices = traj.atom_slice(PHE140_indices)
-            traj_HIS163_indices = traj.atom_slice(HIS163_indices)
-            coords_PHE140_com = md.compute_center_of_mass(traj_PHE140_indices)
-            coords_HIS163_com = md.compute_center_of_mass(traj_HIS163_indices)
-            hacked_traj = traj
+       
+            # move this featurization and expand on it to compute many distances at once
+            #traj = md.load(f'{path}/traj_{str(gen).zfill(4)}.xtc',top = f'{path}/xtc.gro')
+            #PHE140_indices = [a.index for a in traj.topology.atoms if a.residue.index in [141] and a.name in ['CG','CD1','CD2','CE1','CE2','CZ']]
+            #HIS163_indices = [a.index for a in traj.topology.atoms if a.residue.index in [164]and a.name in ['CG','ND1','CD2','CE1','NE2']]
+            #traj_PHE140_indices = traj.atom_slice(PHE140_indices)
+            #traj_HIS163_indices = traj.atom_slice(HIS163_indices)
+            #coords_PHE140_com = md.compute_center_of_mass(traj_PHE140_indices)
+            #coords_HIS163_com = md.compute_center_of_mass(traj_HIS163_indices)
+            #hacked_traj = traj
 
             ## creating hacked traj 0 and 1
-            hacked_traj.xyz[:,0,:] = coords_PHE140_com # PHE140 trajectory
-            hacked_traj.xyz[:,1,:] = coords_HIS163_com # HIS163 trajectory
+            #hacked_traj.xyz[:,0,:] = coords_PHE140_com # PHE140 trajectory
+            #hacked_traj.xyz[:,1,:] = coords_HIS163_com # HIS163 trajectory
 
 
             ## computing the distance between the center of mass of the PHE140 and HIS163 ring
-            PHE140_HIS163_distances = md.compute_distances(hacked_traj, [[0,1]])[:,0]
-            np.save(f'{path}/PHE140_HIS163_distnces_G{str(gen).zfill(4)}', PHE140_HIS163_distances)
+            #PHE140_HIS163_distances = md.compute_distances(hacked_traj, [[0,1]])[:,0]
+            #np.save(f'{path}/PHE140_HIS163_distnces_G{str(gen).zfill(4)}', PHE140_HIS163_distances)
 
-            gen += 1
-        
-            file_list = ['traj_comp.xtc','xtc.mdp','xtc.top','xtc.ndx','xtc.gro','xtc.tpr','index.ndx']
-            for file in glob.glob(f'{path}/*'):
-                if any(substring in file for substring in file_list):
-                    os.remove(file)
+            gen += 1 # increment the gen to attempt to grab the next WU
+            if gen == 3:
+                break
+        # perform trajectory concatenation of all the gens in the clone
+        trjcat_cmd = f'yes c | gmx trjcat -f {path}/traj* -o {path}/prepbc_traj.xtc'
+        # perform periodic boundary condition corrections on the concatenated trajectory
+        pbc_correct_cmd = f'echo "3\n14\n" | gmx trjconv -f {path}/prepbc_traj.xtc -s {path}/xtc.tpr -n {path}/xtc.ndx -pbc mol -center -o {path}/traj.xtc'
+
+        for cmd in [trjcat_cmd, pbc_correct_cmd]:
+            subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True).decode().split('\n')
+    
+        # burn the evidence, should be left with just xtc.gro and traj.xtc for each clone
+        file_list = ['xtc.mdp','xtc.top','xtc.ndx','xtc.tpr','index.ndx', 'prepbc_traj.xtc']
+        for file in glob.glob(f'{path}/*'):
+            if any(substring in file for substring in file_list):
+                os.remove(file)
                     
-           #gen += 1
